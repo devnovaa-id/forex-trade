@@ -3,8 +3,7 @@ CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 CREATE EXTENSION IF NOT EXISTS "pgcrypto";
 
 -- Create enum types
-CREATE TYPE user_role AS ENUM ('user', 'admin', 'premium');
-CREATE TYPE subscription_plan AS ENUM ('free', 'basic', 'premium', 'enterprise');
+CREATE TYPE user_role AS ENUM ('user', 'admin');
 CREATE TYPE risk_level AS ENUM ('conservative', 'moderate', 'aggressive');
 CREATE TYPE bot_status AS ENUM ('stopped', 'running', 'paused', 'error');
 CREATE TYPE bot_strategy AS ENUM ('scalping', 'dca', 'grid', 'trend_following', 'arbitrage', 'custom');
@@ -40,12 +39,6 @@ CREATE TABLE users (
     win_rate DECIMAL(5,2) DEFAULT 0,
     profit_factor DECIMAL(10,4) DEFAULT 0,
     max_drawdown_reached DECIMAL(5,4) DEFAULT 0,
-    
-    -- Subscription Info
-    subscription_plan subscription_plan DEFAULT 'free',
-    subscription_start_date TIMESTAMPTZ,
-    subscription_end_date TIMESTAMPTZ,
-    subscription_is_active BOOLEAN DEFAULT true,
     
     -- Notification Preferences
     email_notifications JSONB DEFAULT '{"trades": true, "profits": true, "losses": true, "systemAlerts": true}',
@@ -218,7 +211,6 @@ CREATE TABLE system_logs (
 
 -- Create indexes for performance
 CREATE INDEX idx_users_email ON users(email);
-CREATE INDEX idx_users_subscription ON users(subscription_plan, subscription_is_active);
 CREATE INDEX idx_users_created_at ON users(created_at);
 
 CREATE INDEX idx_broker_connections_user_id ON broker_connections(user_id);
