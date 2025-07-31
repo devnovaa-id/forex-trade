@@ -158,6 +158,29 @@ export async function POST(request) {
         message: `Trading bot "${name}" has been created successfully`,
         severity: 'low'
       });
+    }
+
+    // Initialize bot performance record
+    try {
+      await supabaseAdmin
+        .from('bot_performance')
+        .insert({
+          bot_id: bot.id,
+          total_trades: 0,
+          winning_trades: 0,
+          losing_trades: 0,
+          total_profit: 0,
+          total_loss: 0,
+          win_rate: 0,
+          profit_factor: 0,
+          max_drawdown: 0,
+          sharpe_ratio: 0,
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString()
+        });
+    } catch (error) {
+      console.warn('Could not create bot performance record:', error.message);
+    }
 
       return NextResponse.json({
         success: true,
