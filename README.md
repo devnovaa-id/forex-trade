@@ -1,8 +1,53 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://github.com/vercel/next.js/tree/canary/packages/create-next-app).
+# Forex Trading Bot
 
-## Getting Started
+A professional forex trading bot application built with Next.js, featuring AI-powered trading strategies, real-time market data, and comprehensive risk management.
 
-First, run the development server:
+## Features
+
+- 🤖 **AI-Powered Trading**: Advanced algorithms for market analysis
+- 📊 **Real-time Analytics**: Live market data and performance metrics
+- 🛡️ **Risk Management**: Comprehensive risk controls and monitoring
+- 👤 **User Authentication**: Secure user management with Clerk
+- 🗄️ **Database Integration**: Supabase for data persistence
+- 📱 **Responsive Dashboard**: Modern, mobile-friendly interface
+
+## Quick Start
+
+### 1. Clone and Install
+```bash
+git clone <repository-url>
+cd forex-trading-bot
+npm install
+```
+
+### 2. Environment Setup
+Copy the example environment file and configure your variables:
+
+```bash
+cp .env.example .env.local
+```
+
+Edit `.env.local` and fill in your actual values. See `SETUP.md` for detailed configuration instructions.
+
+### 3. Run Development Server
+```bash
+npm run dev
+```
+
+Open [http://localhost:3000](http://localhost:3000) to see the application.
+
+## Demo Mode
+
+The application includes a demo mode that works without external APIs:
+- Mock market data generation
+- Simulated trading operations
+- No real trading occurs
+
+## Documentation
+
+- 📖 [Setup Guide](SETUP.md) - Detailed setup instructions
+- 🔧 [API Documentation](SETUP.md#api-endpoints) - API endpoints reference
+- 🗄️ [Database Schema](SETUP.md#database-schema) - Database structure
 
 ```bash
 npm run dev
