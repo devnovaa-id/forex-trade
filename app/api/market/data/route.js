@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/supabase/client';
-import axios from 'axios';
+import { marketDataService } from '@/lib/trading/market-data';
 
 const FOREX_SYMBOLS = [
   'EURUSD', 'GBPUSD', 'USDJPY', 'USDCHF', 'AUDUSD', 
@@ -23,7 +23,7 @@ export async function GET(request) {
     const symbol = searchParams.get('symbol') || 'EURUSD';
     const timeframe = searchParams.get('timeframe') || '1h';
     const limit = parseInt(searchParams.get('limit') || '100');
-    const source = searchParams.get('source') || 'alpha_vantage';
+    const source = searchParams.get('source') || 'twelve_data';
 
     // Validate parameters
     if (!FOREX_SYMBOLS.includes(symbol.toUpperCase())) {
@@ -51,31 +51,22 @@ export async function GET(request) {
       });
     }
 
-    // Fetch fresh data based on source
+    // Fetch real market data
     let marketData;
     try {
-      switch (source) {
-        case 'alpha_vantage':
-          marketData = await fetchAlphaVantageData(symbol, timeframe, limit);
-          break;
-        case 'twelve_data':
-          marketData = await fetchTwelveDataData(symbol, timeframe, limit);
-          break;
-        case 'finhub':
-          marketData = await fetchFinhubData(symbol, timeframe, limit);
-          break;
-        default:
-          return NextResponse.json({ error: 'Invalid data source' }, { status: 400 });
-      }
+      marketData = await marketDataService.getHistoricalData(symbol, timeframe, limit);
     } catch (error) {
-      console.warn(`Failed to fetch data from ${source}:`, error.message);
-      // Fallback to mock data if external APIs fail
+      console.error('Failed to fetch real market data:', error);
+      
+      // Fallback to mock data only if all real providers fail
       marketData = generateMockMarketData(symbol, timeframe, limit);
     }
 
     if (!marketData || marketData.length === 0) {
-      // Generate mock data as fallback
-      marketData = generateMockMarketData(symbol, timeframe, limit);
+      return NextResponse.json({ 
+        error: 'No market data available',
+        message: 'All data providers are currently unavailable'
+      }, { status: 503 });
     }
 
     // Cache the data
@@ -87,7 +78,7 @@ export async function GET(request) {
     return NextResponse.json({
       success: true,
       data: marketData,
-      source: source,
+      source: 'real',
       timestamp: new Date().toISOString(),
       count: marketData.length
     });
@@ -104,203 +95,52 @@ export async function GET(request) {
 export async function POST(request) {
   try {
     const body = await request.json();
-    const { symbols, timeframe = '1h', source = 'alpha_vantage' } = body;
+    const { symbol, timeframe, data } = body;
 
-    if (!symbols || !Array.isArray(symbols)) {
-      return NextResponse.json({ error: 'Symbols array is required' }, { status: 400 });
+    if (!symbol || !timeframe || !data) {
+      return NextResponse.json({ 
+        error: 'Missing required parameters: symbol, timeframe, data' 
+      }, { status: 400 });
     }
 
-    const results = {};
-    const promises = symbols.map(async (symbol) => {
-      try {
-        const data = await fetchMarketDataBySource(symbol, timeframe, source);
-        results[symbol] = {
-          success: true,
-          data: data,
-          timestamp: new Date().toISOString()
-        };
-      } catch (error) {
-        results[symbol] = {
-          success: false,
-          error: error.message,
-          timestamp: new Date().toISOString()
-        };
-      }
-    });
-
-    await Promise.all(promises);
+    // Store real-time market data
+    await storeMarketDataInDB(symbol, timeframe, data);
 
     return NextResponse.json({
       success: true,
-      results: results,
-      timestamp: new Date().toISOString()
+      message: 'Market data stored successfully'
     });
 
   } catch (error) {
-    console.error('Bulk market data API error:', error);
+    console.error('POST /api/market/data error:', error);
     return NextResponse.json({ 
-      error: 'Failed to fetch bulk market data',
+      error: 'Failed to store market data',
       message: error.message 
     }, { status: 500 });
   }
 }
 
-// Alpha Vantage API integration
-async function fetchAlphaVantageData(symbol, timeframe, limit) {
-  const apiKey = process.env.ALPHA_VANTAGE_API_KEY;
-  if (!apiKey) {
-    throw new Error('Alpha Vantage API key not configured');
-  }
-
-  const function_name = timeframe === '1d' ? 'FX_DAILY' : 'FX_INTRADAY';
-  const interval = TIMEFRAMES[timeframe];
-  
-  const url = `https://www.alphavantage.co/query?function=${function_name}&from_symbol=${symbol.slice(0,3)}&to_symbol=${symbol.slice(3,6)}&interval=${interval}&apikey=${apiKey}&outputsize=compact`;
-
-  const response = await axios.get(url);
-  const data = response.data;
-
-  if (data['Error Message']) {
-    throw new Error(data['Error Message']);
-  }
-
-  if (data['Note']) {
-    throw new Error('API call frequency limit reached');
-  }
-
-  const timeSeriesKey = Object.keys(data).find(key => key.includes('Time Series'));
-  if (!timeSeriesKey) {
-    throw new Error('Invalid response format from Alpha Vantage');
-  }
-
-  const timeSeries = data[timeSeriesKey];
-  const marketData = Object.entries(timeSeries)
-    .slice(0, limit)
-    .map(([timestamp, values]) => ({
-      timestamp: timestamp,
-      open: parseFloat(values['1. open']),
-      high: parseFloat(values['2. high']),
-      low: parseFloat(values['3. low']),
-      close: parseFloat(values['4. close']),
-      volume: values['5. volume'] ? parseInt(values['5. volume']) : 0
-    }))
-    .reverse(); // Most recent first
-
-  return marketData;
-}
-
-// Twelve Data API integration
-async function fetchTwelveDataData(symbol, timeframe, limit) {
-  const apiKey = process.env.TWELVE_DATA_API_KEY;
-  if (!apiKey) {
-    throw new Error('Twelve Data API key not configured');
-  }
-
-  const interval = TIMEFRAMES[timeframe];
-  const url = `https://api.twelvedata.com/time_series?symbol=${symbol}&interval=${interval}&outputsize=${limit}&apikey=${apiKey}`;
-
-  const response = await axios.get(url);
-  const data = response.data;
-
-  if (data.status === 'error') {
-    throw new Error(data.message);
-  }
-
-  if (!data.values) {
-    throw new Error('No data available from Twelve Data');
-  }
-
-  const marketData = data.values.map(item => ({
-    timestamp: item.datetime,
-    open: parseFloat(item.open),
-    high: parseFloat(item.high),
-    low: parseFloat(item.low),
-    close: parseFloat(item.close),
-    volume: item.volume ? parseInt(item.volume) : 0
-  })).reverse();
-
-  return marketData;
-}
-
-// Finhub API integration
-async function fetchFinhubData(symbol, timeframe, limit) {
-  const apiKey = process.env.FINHUB_API_KEY;
-  if (!apiKey) {
-    throw new Error('Finhub API key not configured');
-  }
-
-  // Finhub uses different symbol format
-  const finhubSymbol = `OANDA:${symbol}_USD`;
-  const resolution = getFinHubResolution(timeframe);
-  const to = Math.floor(Date.now() / 1000);
-  const from = to - (limit * getTimeframeSeconds(timeframe));
-
-  const url = `https://finnhub.io/api/v1/forex/candle?symbol=${finhubSymbol}&resolution=${resolution}&from=${from}&to=${to}&token=${apiKey}`;
-
-  const response = await axios.get(url);
-  const data = response.data;
-
-  if (data.s === 'no_data') {
-    throw new Error('No data available from Finhub');
-  }
-
-  if (!data.c || data.c.length === 0) {
-    throw new Error('Invalid response from Finhub');
-  }
-
-  const marketData = data.c.map((close, index) => ({
-    timestamp: new Date(data.t[index] * 1000).toISOString(),
-    open: data.o[index],
-    high: data.h[index],
-    low: data.l[index],
-    close: close,
-    volume: data.v ? data.v[index] : 0
-  }));
-
-  return marketData;
-}
-
-// Helper functions
-function getFinHubResolution(timeframe) {
-  const resolutionMap = {
-    '1m': '1',
-    '5m': '5',
-    '15m': '15',
-    '30m': '30',
-    '1h': '60',
-    '4h': '240',
-    '1d': 'D'
-  };
-  return resolutionMap[timeframe] || '60';
-}
-
-function getTimeframeSeconds(timeframe) {
-  const secondsMap = {
-    '1m': 60,
-    '5m': 300,
-    '15m': 900,
-    '30m': 1800,
-    '1h': 3600,
-    '4h': 14400,
-    '1d': 86400
-  };
-  return secondsMap[timeframe] || 3600;
-}
-
 async function getCachedMarketData(symbol, timeframe) {
   try {
     const { data, error } = await supabaseAdmin
-      .from('market_data')
-      .select('data, timestamp')
+      .from('market_data_cache')
+      .select('*')
       .eq('symbol', symbol)
       .eq('timeframe', timeframe)
       .order('timestamp', { ascending: false })
       .limit(1)
       .single();
 
-    if (error) return null;
-    return data;
+    if (error || !data) {
+      return null;
+    }
+
+    return {
+      data: JSON.parse(data.data),
+      timestamp: data.timestamp
+    };
   } catch (error) {
+    console.error('Error getting cached market data:', error);
     return null;
   }
 }
@@ -308,33 +148,39 @@ async function getCachedMarketData(symbol, timeframe) {
 function isDataFresh(timestamp, timeframe) {
   const now = new Date();
   const dataTime = new Date(timestamp);
-  const diffMinutes = (now - dataTime) / (1000 * 60);
-
-  const freshnessThreshold = {
-    '1m': 1,
-    '5m': 5,
-    '15m': 15,
-    '30m': 30,
-    '1h': 60,
-    '4h': 240,
-    '1d': 1440
+  const ageMs = now - dataTime;
+  
+  // Define freshness thresholds based on timeframe
+  const freshnessThresholds = {
+    '1m': 2 * 60 * 1000,    // 2 minutes
+    '5m': 10 * 60 * 1000,   // 10 minutes
+    '15m': 30 * 60 * 1000,  // 30 minutes
+    '30m': 60 * 60 * 1000,  // 1 hour
+    '1h': 5 * 60 * 60 * 1000, // 5 hours
+    '4h': 24 * 60 * 60 * 1000, // 24 hours
+    '1d': 7 * 24 * 60 * 60 * 1000 // 7 days
   };
 
-  return diffMinutes < (freshnessThreshold[timeframe] || 60);
+  const threshold = freshnessThresholds[timeframe] || freshnessThresholds['1h'];
+  return ageMs < threshold;
 }
 
 async function cacheMarketData(symbol, timeframe, data) {
   try {
-    await supabaseAdmin
-      .from('market_data')
+    const { error } = await supabaseAdmin
+      .from('market_data_cache')
       .upsert({
         symbol,
         timeframe,
-        data: data,
+        data: JSON.stringify(data),
         timestamp: new Date().toISOString()
       }, {
         onConflict: 'symbol,timeframe'
       });
+
+    if (error) {
+      console.error('Error caching market data:', error);
+    }
   } catch (error) {
     console.error('Error caching market data:', error);
   }
@@ -342,86 +188,72 @@ async function cacheMarketData(symbol, timeframe, data) {
 
 async function storeMarketDataInDB(symbol, timeframe, data) {
   try {
-    const records = data.map(item => ({
+    const marketDataRecords = data.map(candle => ({
       symbol,
       timeframe,
-      timestamp: item.timestamp,
-      open: item.open,
-      high: item.high,
-      low: item.low,
-      close: item.close,
-      volume: item.volume,
-      created_at: new Date().toISOString()
+      timestamp: candle.timestamp,
+      open: candle.open,
+      high: candle.high,
+      low: candle.low,
+      close: candle.close,
+      volume: candle.volume || 0,
+      spread: candle.spread || 0
     }));
 
-    await supabaseAdmin
+    const { error } = await supabaseAdmin
       .from('market_data')
-      .upsert(records, {
+      .upsert(marketDataRecords, {
         onConflict: 'symbol,timeframe,timestamp'
       });
+
+    if (error) {
+      console.error('Error storing market data in DB:', error);
+    }
   } catch (error) {
-    console.error('Error storing market data:', error);
+    console.error('Error storing market data in DB:', error);
   }
 }
 
-async function fetchMarketDataBySource(symbol, timeframe, source) {
-  switch (source) {
-    case 'alpha_vantage':
-      return await fetchAlphaVantageData(symbol, timeframe, 100);
-    case 'twelve_data':
-      return await fetchTwelveDataData(symbol, timeframe, 100);
-    case 'finhub':
-      return await fetchFinhubData(symbol, timeframe, 100);
-    default:
-      throw new Error('Invalid data source');
-  }
-}
-
-// Generate mock market data for demo purposes
 function generateMockMarketData(symbol, timeframe, limit) {
   const data = [];
   const now = new Date();
-  const timeframeSeconds = getTimeframeSeconds(timeframe);
+  const timeframeMs = getTimeframeMs(timeframe);
   
-  // Base price varies by symbol
-  const basePrices = {
-    'EURUSD': 1.0850,
-    'GBPUSD': 1.2650,
-    'USDJPY': 148.50,
-    'USDCHF': 0.8750,
-    'AUDUSD': 0.6650,
-    'USDCAD': 1.3550,
-    'NZDUSD': 0.6150,
-    'EURGBP': 0.8580,
-    'EURJPY': 161.20,
-    'GBPJPY': 187.80
-  };
-  
-  let basePrice = basePrices[symbol] || 1.0000;
-  
-  for (let i = 0; i < limit; i++) {
-    const timestamp = new Date(now.getTime() - (limit - i) * timeframeSeconds * 1000);
+  for (let i = limit - 1; i >= 0; i--) {
+    const timestamp = new Date(now.getTime() - (i * timeframeMs));
+    const basePrice = 1.1000 + (Math.random() - 0.5) * 0.02; // EURUSD base price
+    const volatility = 0.001;
     
-    // Generate realistic price movements
-    const volatility = 0.002; // 0.2% volatility
-    const randomChange = (Math.random() - 0.5) * volatility;
-    basePrice *= (1 + randomChange);
-    
-    const open = basePrice;
-    const high = open * (1 + Math.random() * 0.001);
-    const low = open * (1 - Math.random() * 0.001);
-    const close = open * (1 + (Math.random() - 0.5) * 0.0005);
-    const volume = Math.floor(Math.random() * 1000000) + 100000;
+    const open = basePrice + (Math.random() - 0.5) * volatility;
+    const high = open + Math.random() * volatility;
+    const low = open - Math.random() * volatility;
+    const close = open + (Math.random() - 0.5) * volatility;
     
     data.push({
+      symbol,
+      timeframe,
       timestamp: timestamp.toISOString(),
       open: parseFloat(open.toFixed(5)),
       high: parseFloat(high.toFixed(5)),
       low: parseFloat(low.toFixed(5)),
       close: parseFloat(close.toFixed(5)),
-      volume: volume
+      volume: Math.floor(Math.random() * 1000) + 100,
+      spread: parseFloat((Math.random() * 0.0002).toFixed(5))
     });
   }
   
   return data;
+}
+
+function getTimeframeMs(timeframe) {
+  const msMap = {
+    '1m': 60 * 1000,
+    '5m': 5 * 60 * 1000,
+    '15m': 15 * 60 * 1000,
+    '30m': 30 * 60 * 1000,
+    '1h': 60 * 60 * 1000,
+    '4h': 4 * 60 * 60 * 1000,
+    '1d': 24 * 60 * 60 * 1000
+  };
+  return msMap[timeframe] || 60 * 1000;
 }
