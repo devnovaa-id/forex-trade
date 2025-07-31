@@ -1,6 +1,6 @@
-# Real Forex Trading Bot
+# Platform Trading OANDA MT5 Indonesia
 
-A comprehensive, production-ready forex trading bot with real market data integration, broker connections, and automated trading strategies.
+Platform trading forex terdepan dengan integrasi OANDA dan teknologi MT5 untuk trader Indonesia. Dilengkapi dengan visual trading yang menawan, backtesting akurat, dan interface responsif dalam bahasa Indonesia.
 
 ## 🚀 Features
 
